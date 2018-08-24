@@ -10,10 +10,12 @@ def create_submit():
         model_dir = "./save_model"
         saver = tf.train.import_meta_graph(os.path.join(model_dir, "airbus_model.meta"))
         saver.restore(sess, tf.train.latest_checkpoint(model_dir))
+        # if not in the original path, do:
+        # saver.restore(sess, "new_path/airbus_model")
 
         graph = tf.get_default_graph()
         x_holder = graph.get_tensor_by_name("x_holder:0")
-        final_out = graph.get_tensor_by_name("final_out:0")
+        pixel_pred = graph.get_tensor_by_name("pixel_pred:0")
 
         test_dir = "../data/test"
         image_id = np.array(os.listdir(test_dir))
@@ -21,9 +23,9 @@ def create_submit():
         for img_name in tqdm(image_id[:10]):
             image = cv2.imread(os.path.join(test_dir, img_name))/255.0
             # image = cv2.resize(image_shape)
-            out = tf.squeeze(final_out)
-            out = tf.cast(out > 0.5, tf.float32)
-            masks = sess.run(out, feed_dict={x_holder:image})
+
+            pred = sess.run(pixel_pred, feed_dict={x_holder:image})
+            masks = multi_rle_encode(pred)
             if len(masks) > 0:
                 for mask in masks:
                     images_encode += [{'ImageId': img_name, 'EncodedPixels': mask}]

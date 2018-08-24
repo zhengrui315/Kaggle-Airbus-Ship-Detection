@@ -18,6 +18,11 @@ from urllib.request import urlretrieve
 from tqdm import tqdm
 
 
+
+
+#####################
+## Encode - Decode ##
+#####################
 # https://www.kaggle.com/kmader/baseline-u-net-model-part-1
 def rle_encode(arr_mask):
     """
@@ -73,6 +78,10 @@ def rle_decode_all(rle_mask_list):
 
 
 
+
+##############################
+##### Image Augmentation #####
+##############################
 # https://github.com/vxy10/ImageAugmentation
 # https://docs.opencv.org/3.0-beta/doc/py_tutorials/py_imgproc/py_geometric_transformations/py_geometric_transformations.html
 def augment_brightness_camera_images(image):
@@ -165,7 +174,7 @@ def batch_gen(data_dir, label_df, batch_size=16, image_shape=None, augment=False
             batch_x = []
             batch_y = []
             for img_name in img_list[start:start+batch_size]:
-                img_x = cv2.imread(os.path.join(data_dir,img_name))/255.0
+                img_x = cv2.imread(os.path.join(data_dir,img_name))
 
                 if label_df.loc[img_name, 'HasShip'] == 0:
                     img_y = rle_decode_all([])
@@ -174,13 +183,17 @@ def batch_gen(data_dir, label_df, batch_size=16, image_shape=None, augment=False
                 if image_shape:
                     img_x = cv2.resize(img_x, image_shape)
                     img_y = cv2.resize(img_y, image_shape)
-                if augment:
-                    img_x, img_y = augment_img(img_x, img_y)
                 # img_y = img_y.reshape(img_y.shape+(1,))
 
-                batch_x.append(img_x)
-                batch_y.append(img_y)
+                if augment:
+                    img_x, img_y = augment_img(img_x, img_y)
+
+                batch_x.append(img_x/255.0)
+                batch_y.append(img_y/255.0)
             yield np.array(batch_x), np.array(batch_y)
+
+
+
 
 
 # based on https://www.kaggle.com/kmader/baseline-u-net-model-part-1
@@ -216,7 +229,6 @@ def IoU(y_true, y_pred, eps=1e-6):
         return IoU(1-y_true, 1-y_pred)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1,2])
     union = tf.reduce_sum(y_true, axis=[1,2]) + tf.reduce_sum(y_pred, axis=[1,2]) - intersection
-
 
     return -tf.reduce_mean((intersection + eps) / (union + eps), axis=0)
 
