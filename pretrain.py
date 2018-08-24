@@ -16,6 +16,7 @@ from datetime import datetime
 import pickle
 import pandas as pd
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 class airbus_model():
     def __init__(self, image_shape=(768, 768), model_dir=None, learning_rate=0.0001, continue_training=False,
@@ -52,6 +53,8 @@ class airbus_model():
 
             self.sess.run(tf.global_variables_initializer())
             self.load_weights()
+
+            assert all(['new' in v.name for v in tf.trainable_variables()]), "please set trainable variables correctly"
 
     def conv_layers(self):
         ############   down ##############
@@ -161,9 +164,9 @@ class airbus_model():
         validation_accuracy_metrics = []
         validation_iou_metrics = []
 
-        # print("evaluating validation...")
-        # validation_loss, validation_accuracy, validation_iou = self.evaluate(data_folder, valid_df)
-        # print("Validation loss: %.4f, accuracy: %.5f, iou: %.3f" % (validation_loss, validation_accuracy, validation_iou))
+        print("evaluating validation...")
+        validation_loss, validation_accuracy, validation_iou = self.evaluate(data_folder, valid_df)
+        print("Validation loss: %.4f, accuracy: %.5f, iou: %.3f" % (validation_loss, validation_accuracy, validation_iou))
 
         for epoch in range(epochs):
             print("Epochs {} ... \n".format(epoch + 1))
@@ -181,12 +184,12 @@ class airbus_model():
             print("Validation loss: %.4f, accuracy: %.5f, iou: %.3f" % (
             validation_loss, validation_accuracy, validation_iou))
 
-            print("Evaluating training...")
+            #print("Evaluating training...")
             training_loss, training_accuracy, training_iou = (1, 1, 1)  # self.evaluate(data_folder, train_df)
             training_loss_metrics.append(training_loss)
             training_accuracy_metrics.append(training_accuracy)
             training_iou_metrics.append(training_iou)
-            print("Training loss: %.4f, accuracy: %.5f, iou: %.3f" % (training_loss, training_accuracy, training_iou))
+            #print("Training loss: %.4f, accuracy: %.5f, iou: %.3f" % (training_loss, training_accuracy, training_iou))
             # self.debug2(data_folder, label_df)
         print("loss, acc, iou: ")
         print(validation_loss_metrics)
