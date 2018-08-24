@@ -28,25 +28,51 @@ class airbus_model():
         self.x_holder = tf.placeholder(tf.float32, [None, self.image_shape[0], self.image_shape[1], 3], name="x_holder")
         self.y_holder = tf.placeholder(tf.float32, [None, self.image_shape[0], self.image_shape[1]], name="y_holder")
 
+
+        self.sess = tf.Session()
+
+        if self.continue_training:
+            print("Continue Training ...")
+            saver = tf.train.Saver()
+            saver.restore(self.sess, self.model_dir)
+        else:
+            print("Build the graph for the first time ...")
+            self.conv_layers()
+            reshaped_logits = tf.reshape(self.final, (-1, self.image_shape[0]*self.image_shape[1]))
+            reshaped_labels = tf.reshape(self.y_holder, (-1, self.image_shape[0]*self.image_shape[1]))
+            self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=reshaped_logits, labels=reshaped_labels),
+                           name="cross_entropy")
+            self.train_op = tf.train.AdamOptimizer(learning_rate = self.lr).minimize(self.loss, name="train_op")
+
+            self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
+            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pixel_pred, self.y_holder), tf.float32), name="accuracy")
+            self.iou = tf.identity(IoU(self.y_holder, self.pixel_pred), name="iou")
+
+            self.sess.run(tf.global_variables_initializer())
+            param_count = [tf.reduce_prod(v.shape) for v in tf.trainable_variables()]
+            print("There are {} trainable parameters in each layer".format(self.sess.run(param_count)))
+            print("There are {} trainable parameters".format(self.sess.run(tf.reduce_sum(param_count))))
+
+    def conv_layers(self):
         # downsample
-        conv1_1 = tf.layers.conv2d(self.x_holder, filters=8, kernel_size=(3,3), padding='same',
+        conv1_1 = tf.layers.conv2d(self.x_holder, filters=32, kernel_size=(3,3), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv1_1')
-        conv1_2 = tf.layers.conv2d(conv1_1, filters=8, kernel_size=(3,3), padding='same',
+        conv1_2 = tf.layers.conv2d(conv1_1, filters=32, kernel_size=(3,3), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv1_2')
         pool1 = tf.layers.max_pooling2d(conv1_2, pool_size=(2,2), strides=2, padding='same', name='pool1')
 
-        conv2_1 = tf.layers.conv2d(pool1, filters=16, kernel_size=(3,3), padding='same',
-                                          bias_initializer=tf.constant_initializer(0.1),
-                                          kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv2_1')
-        conv2_2 = tf.layers.conv2d(conv2_1, filters=16, kernel_size=(3,3), padding='same',
-                                          bias_initializer=tf.constant_initializer(0.1),
-                                          kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv2_2')
-        pool2 = tf.layers.max_pooling2d(conv2_2, pool_size=(2,2), strides=2, padding='same', name='pool2')
+        # conv2_1 = tf.layers.conv2d(pool1, filters=32, kernel_size=(3,3), padding='same',
+        #                                   bias_initializer=tf.constant_initializer(0.1),
+        #                                   kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv2_1')
+        # conv2_2 = tf.layers.conv2d(conv2_1, filters=32, kernel_size=(3,3), padding='same',
+        #                                   bias_initializer=tf.constant_initializer(0.1),
+        #                                   kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv2_2')
+        # pool2 = tf.layers.max_pooling2d(conv2_2, pool_size=(2,2), strides=2, padding='same', name='pool2')
 
 
-        conv3_1 = tf.layers.conv2d(pool2, filters=32, kernel_size=(3,3), padding='same',
+        conv3_1 = tf.layers.conv2d(pool1, filters=32, kernel_size=(3,3), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv3_1')
         conv3_2 = tf.layers.conv2d(conv3_1, filters=32, kernel_size=(3,3), padding='same',
@@ -64,10 +90,10 @@ class airbus_model():
         pool4 = tf.layers.max_pooling2d(conv4_2, pool_size=(2,2), strides=2, padding='same', name='pool4')
 
 
-        conv5_1 = tf.layers.conv2d(pool4, filters=128, kernel_size=(3,3), padding='same',
+        conv5_1 = tf.layers.conv2d(pool4, filters=64, kernel_size=(3,3), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv5_1')
-        conv5_2 = tf.layers.conv2d(conv5_1, filters=128, kernel_size=(3,3), padding='same',
+        conv5_2 = tf.layers.conv2d(conv5_1, filters=64, kernel_size=(3,3), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv5_2')
         pool5 = tf.layers.max_pooling2d(conv5_2, pool_size=(2,2), strides=2, padding='same', name='pool5')
@@ -77,22 +103,22 @@ class airbus_model():
         conv6 = tf.layers.conv2d_transpose(pool5, filters=64, kernel_size=(3,3), strides=(2,2), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv6')
-        add46 = tf.add(conv6, pool4, name='add_4_6')
+        add46 = tf.concat([conv6, pool4], axis=-1, name='add_4_6')
 
         conv7 = tf.layers.conv2d_transpose(add46, filters=32, kernel_size=(3,3), strides=(2,2), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv7')
-        add73 = tf.add(conv7, pool3, name='add_3_7')
+        add73 = tf.concat([conv7, pool3], axis=-1, name='add_3_7')
 
-        conv8 = tf.layers.conv2d_transpose(add73, filters=16, kernel_size=(3,3), strides=(2,2), padding='same',
-                                          bias_initializer=tf.constant_initializer(0.1),
-                                          kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv8')
-        add82 = tf.add(conv8, pool2, name='add_2_8')
+        #conv8 = tf.layers.conv2d_transpose(add73, filters=32, kernel_size=(3,3), strides=(2,2), padding='same',
+        #                                  bias_initializer=tf.constant_initializer(0.1),
+        #                                  kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv8')
+        #add82 = tf.add(conv8, pool2, name='add_2_8')
 
-        conv9 = tf.layers.conv2d_transpose(add82, filters=8, kernel_size=(3,3), strides=(2,2), padding='same',
+        conv9 = tf.layers.conv2d_transpose(add73, filters=32, kernel_size=(3,3), strides=(2,2), padding='same',
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=tf.nn.relu, trainable=True, name='conv9')
-        add91 = tf.add(conv9, pool1, name='add_1_9')
+        add91 = tf.concat([conv9, pool1], axis=-1, name='add_1_9')
 
         # the last layer should be linear, so no activation function
         logits = tf.layers.conv2d_transpose(add91, filters=1, kernel_size=(3,3), strides=(2,2), padding='same',
@@ -100,27 +126,6 @@ class airbus_model():
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=None, trainable=True, name='logits')
         self.final = tf.squeeze(logits, axis=-1) # remove the channel dimension which has size 1
         self.out = tf.sigmoid(self.final, name="final_out")
-
-        self.sess = tf.Session()
-
-        # if self.model_dir and os.path.isfile(os.path.join(self.model_dir, "airbus_model.meta")):# if not None, continue training
-        if self.continue_training:
-            saver = tf.train.Saver()
-            saver.restore(self.sess, self.model_dir)
-        else:
-            reshaped_logits = tf.reshape(self.final, (-1, self.image_shape[0]*self.image_shape[1]))
-            reshaped_labels = tf.reshape(self.y_holder, (-1, self.image_shape[0]*self.image_shape[1]))
-            self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=reshaped_logits, labels=reshaped_labels),
-                           name="cross_entropy")
-            self.train_op = tf.train.AdamOptimizer(learning_rate = self.lr).minimize(self.loss, name="train_op")
-
-            self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
-            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pixel_pred, self.y_holder), tf.float32), name="accuracy")
-            self.iou = tf.identity(IoU(self.y_holder, self.pixel_pred), name="iou")
-
-            self.sess.run(tf.global_variables_initializer())
-
-
 
     def train(self, epochs, data_folder, label_df):
 
