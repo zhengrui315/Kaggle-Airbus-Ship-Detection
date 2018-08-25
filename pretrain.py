@@ -19,42 +19,47 @@ import pandas as pd
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 class airbus_model():
-    def __init__(self, image_shape=(768, 768), model_dir=None, learning_rate=0.0001, continue_training=False,
+    def __init__(self, image_shape=(768, 768), model_dir="./save_model", learning_rate=0.0001, continue_training=False,
                  vgg_path="../vgg/vgg16_weights.npz"):
         self.image_shape = image_shape
         self.model_dir = model_dir
+        if not os.path.isdir(self.model_dir):
+            os.makedirs(self.model_dir)
+
         self.lr = learning_rate
         self.continue_training = continue_training
         self.vgg_path = vgg_path
 
         self.sess = tf.Session()
 
+        self.x_holder = tf.placeholder(tf.float32, [None, self.image_shape[0], self.image_shape[1], 3],
+                                       name="x_holder")
+        self.y_holder = tf.placeholder(tf.float32, [None, self.image_shape[0], self.image_shape[1]],
+                                       name="y_holder")
+        self.final = self.conv_layers()
+        self.out = tf.sigmoid(self.final, name="final_out")
+        reshaped_logits = tf.reshape(self.final, (-1, self.image_shape[0] * self.image_shape[1]))
+        reshaped_labels = tf.reshape(self.y_holder, (-1, self.image_shape[0] * self.image_shape[1]))
+        self.loss = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(logits=reshaped_logits, labels=reshaped_labels),
+            name="cross_entropy")
+        self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss, name="train_op")
+
+        self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
+        self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pixel_pred, self.y_holder), tf.float32),
+                                       name="accuracy")
+        self.iou = tf.identity(IoU(self.y_holder, self.pixel_pred), name="iou")
+
         if self.continue_training:
-            saver = tf.train.Saver()
-            saver.restore(self.sess, self.model_dir)
+            print("Continue Training ...")
+            restore_saver = tf.train.Saver()
+            restore_saver.restore(self.sess, os.path.join(self.model_dir, "airbus_model"))
         else:
-            self.x_holder = tf.placeholder(tf.float32, [None, self.image_shape[0], self.image_shape[1], 3],
-                                           name="x_holder")
-            self.y_holder = tf.placeholder(tf.float32, [None, self.image_shape[0], self.image_shape[1]],
-                                           name="y_holder")
-            self.final = self.conv_layers()
-            self.out = tf.sigmoid(self.final, name="final_out")
-            reshaped_logits = tf.reshape(self.final, (-1, self.image_shape[0] * self.image_shape[1]))
-            reshaped_labels = tf.reshape(self.y_holder, (-1, self.image_shape[0] * self.image_shape[1]))
-            self.loss = tf.reduce_mean(
-                tf.nn.sigmoid_cross_entropy_with_logits(logits=reshaped_logits, labels=reshaped_labels),
-                name="cross_entropy")
-            self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss, name="train_op")
-
-            self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
-            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pixel_pred, self.y_holder), tf.float32),
-                                           name="accuracy")
-            self.iou = tf.identity(IoU(self.y_holder, self.pixel_pred), name="iou")
-
             self.sess.run(tf.global_variables_initializer())
             self.load_weights()
-
             assert all(['new' in v.name for v in tf.trainable_variables()]), "please set trainable variables correctly"
+        self.saver = tf.train.Saver()
+
 
     def conv_layers(self):
         ############   down ##############
@@ -164,9 +169,13 @@ class airbus_model():
         validation_accuracy_metrics = []
         validation_iou_metrics = []
 
+        best_validation_loss = np.infty
+        check_progress_num = 0
+        max_check_progress_num = 5
+
         print("evaluating validation...")
         validation_loss, validation_accuracy, validation_iou = self.evaluate(data_folder, valid_df)
-        print("Validation loss: %.4f, accuracy: %.5f, iou: %.3f" % (validation_loss, validation_accuracy, validation_iou))
+        print("Validation loss: %.4f, accuracy: %.5f, iou: %.3f" % (validation_loss, validation_accuracy, validation_iou[-1]))
 
         for epoch in range(epochs):
             print("Epochs {} ... \n".format(epoch + 1))
@@ -181,22 +190,36 @@ class airbus_model():
             validation_loss_metrics.append(validation_loss)
             validation_accuracy_metrics.append(validation_accuracy)
             validation_iou_metrics.append(validation_iou)
-            print("Validation loss: %.4f, accuracy: %.5f, iou: %.3f" % (
-            validation_loss, validation_accuracy, validation_iou))
+            print("Validation loss: %.4f, accuracy: %.5f, iou: %.5f" % (validation_loss, validation_accuracy, validation_iou[-1]))
+            print("iou:", validation_iou)
 
             #print("Evaluating training...")
             training_loss, training_accuracy, training_iou = (1, 1, 1)  # self.evaluate(data_folder, train_df)
             training_loss_metrics.append(training_loss)
             training_accuracy_metrics.append(training_accuracy)
             training_iou_metrics.append(training_iou)
-            #print("Training loss: %.4f, accuracy: %.5f, iou: %.3f" % (training_loss, training_accuracy, training_iou))
+            #print("Training loss: %.4f, accuracy: %.5f, iou: %.3f" % (training_loss, training_accuracy, training_iou[-1]))
             # self.debug2(data_folder, label_df)
+
+            if validation_loss < best_validation_loss:
+                self.saver.save(self.sess, os.path.join(self.model_dir, "airbus_model"))
+                best_validation_loss = validation_loss
+                check_progress_num = 0
+            else:
+                check_progress_num += 1
+                if check_progress_num > max_check_progress_num:
+                    print("Early Stopping at Epoch {}".format(epoch+1))
+                    break
+
+
         print("loss, acc, iou: ")
         print(validation_loss_metrics)
         print(validation_accuracy_metrics)
         print(validation_iou_metrics)
-        return (training_loss_metrics, training_accuracy_metrics, training_iou_metrics, validation_loss_metrics,
-                validation_accuracy_metrics, validation_iou_metrics)
+
+        print("Saving History ...")
+        self.save_history((training_loss_metrics, training_accuracy_metrics, training_iou_metrics, validation_loss_metrics,
+                validation_accuracy_metrics, validation_iou_metrics))
 
     def evaluate(self, data_folder, label_df):
         batch_size = 16
@@ -204,16 +227,16 @@ class airbus_model():
         num_examples = (label_df.shape[0] // batch_size) * batch_size
         total_loss = 0
         total_acc = 0
-        total_iou = 0
+        total_iou = [0,0,0]
         for _ in tqdm(range(0, num_examples, batch_size)):
             X_batch, y_batch = next(data_generator)
             loss, accuracy, iou = self.sess.run([self.loss, self.accuracy, self.iou],
                                                 feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
             total_loss += loss
             total_acc += accuracy
-            total_iou += iou
-        return total_loss / (num_examples / batch_size), total_acc / (num_examples / batch_size), total_iou / (
-        num_examples / batch_size)
+            total_iou = [total_iou[i] + iou[i] for i in range(3)]
+        return total_loss / (num_examples / batch_size), total_acc / (num_examples / batch_size), [x / (
+        num_examples / batch_size) for x in total_iou]
 
     def debug1(self, data_folder, label_df):
         """ use the 3rd image to check whether the code is working properly """
@@ -266,16 +289,8 @@ class airbus_model():
         print("iou1, iou2 = ", iou, iou2)
         # assert iou == iou2, "something is wrong with the definition of IoU function!!!"
 
-    def save(self, metrics):
-        print("Saving the model ...")
-
-        if not self.model_dir:
-            self.model_dir = "./save_model"
-        if not os.path.isdir(self.model_dir):
-            os.makedirs(self.model_dir)
-
-        saver = tf.train.Saver()
-        saver.save(self.sess, os.path.join(self.model_dir, "airbus_model"))
+    def save_history(self, metrics):
+        print("Saving the history ...")
 
         train_loss, train_accuracy, train_iou, valid_loss, valid_accuracy, valid_iou = metrics
         # metrics_list = ("train_loss", "train_accuracy", "train_iou", "valid_loss", "valid_accuracy", "valid_iou")
@@ -326,20 +341,17 @@ def main():
     )
     parser.add_argument("-ct", "--continues_training", help="Continue from where you left off", action="store_true")
     args = parser.parse_args()
-    num_epochs = args.num_epochs
+    NUM_EPOCHS = args.num_epochs
     CONTINUE_TRAINING = args.continues_training
 
     #image_shape = (224, 224)
     data_folder = os.path.join(os.getcwd(), '../data/train')
+    model_folder = os.path.join(os.getcwd(), 'save_model')
     label_df = masks_read(os.path.join(os.getcwd(), '../data'))
-    if CONTINUE_TRAINING:
-        model = airbus_model(model_dir=os.path.join(os.getcwd(), 'save_model'))
-    else:
-        model = airbus_model()
-    #model.debug2(data_folder, label_df)
-    metrics = model.train(num_epochs, data_folder, label_df)
 
-    model.save(metrics)
+    model = airbus_model(model_dir=model_folder, continue_training=CONTINUE_TRAINING)
+    #model.debug2(data_folder, label_df)
+    model.train(NUM_EPOCHS, data_folder, label_df)
 
 
 if __name__ == '__main__':

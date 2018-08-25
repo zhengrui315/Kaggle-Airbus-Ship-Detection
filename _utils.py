@@ -215,6 +215,7 @@ def masks_read(data_folder, max_sample = 2000):
     masks_agg = masks_agg[masks_agg['file_size_kb'] > 50]
     masks_agg.drop('file_size_kb', axis=1, inplace=True)
 
+    # downsample
     df = masks_agg.groupby('HasShip', as_index=False).apply(lambda x: x.sample(max_sample, random_state=99) if len(x) > max_sample else x)
     df.set_index('ImageId', inplace=True)
 
@@ -229,6 +230,6 @@ def IoU(y_true, y_pred, eps=1e-6):
         return IoU(1-y_true, 1-y_pred)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1,2])
     union = tf.reduce_sum(y_true, axis=[1,2]) + tf.reduce_sum(y_pred, axis=[1,2]) - intersection
-
-    return -tf.reduce_mean((intersection + eps) / (union + eps), axis=0)
+    iou = (intersection + eps) / (union + eps)
+    return tf.reduce_mean(intersection, axis=0), tf.reduce_mean(union, axis=0), tf.reduce_mean(iou, axis=0)
 
