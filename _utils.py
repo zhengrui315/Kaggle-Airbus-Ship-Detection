@@ -231,5 +231,5 @@ def IoU(y_true, y_pred, eps=1e-6):
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1,2])
     union = tf.reduce_sum(y_true, axis=[1,2]) + tf.reduce_sum(y_pred, axis=[1,2]) - intersection
     iou = (intersection + eps) / (union + eps)
-    return tf.reduce_mean(intersection, axis=0), tf.reduce_mean(union, axis=0), tf.reduce_mean(iou, axis=0)
+    return tf.reduce_mean(tf.reduce_sum(y_true, axis=[1,2])), tf.reduce_mean(tf.reduce_sum(y_pred, axis=[1,2])), tf.reduce_mean(intersection), tf.reduce_mean(union), tf.reduce_mean(iou)
 

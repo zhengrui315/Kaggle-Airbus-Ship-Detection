@@ -19,7 +19,7 @@ import pandas as pd
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 class airbus_model():
-    def __init__(self, image_shape=(768, 768), model_dir="./save_model", learning_rate=0.0001, continue_training=False,
+    def __init__(self, image_shape=(768, 768), model_dir="./save_model", learning_rate=0.001, continue_training=False,
                  vgg_path="../vgg/vgg16_weights.npz"):
         self.image_shape = image_shape
         self.model_dir = model_dir
@@ -194,7 +194,7 @@ class airbus_model():
             print("iou:", validation_iou)
 
             #print("Evaluating training...")
-            training_loss, training_accuracy, training_iou = (1, 1, 1)  # self.evaluate(data_folder, train_df)
+            training_loss, training_accuracy, training_iou = self.evaluate(data_folder, train_df)
             training_loss_metrics.append(training_loss)
             training_accuracy_metrics.append(training_accuracy)
             training_iou_metrics.append(training_iou)
@@ -227,14 +227,14 @@ class airbus_model():
         num_examples = (label_df.shape[0] // batch_size) * batch_size
         total_loss = 0
         total_acc = 0
-        total_iou = [0,0,0]
+        total_iou = [0,0,0,0,0]
         for _ in tqdm(range(0, num_examples, batch_size)):
             X_batch, y_batch = next(data_generator)
             loss, accuracy, iou = self.sess.run([self.loss, self.accuracy, self.iou],
                                                 feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
             total_loss += loss
             total_acc += accuracy
-            total_iou = [total_iou[i] + iou[i] for i in range(3)]
+            total_iou = [total_iou[i] + iou[i] for i in range(len(iou))]
         return total_loss / (num_examples / batch_size), total_acc / (num_examples / batch_size), [x / (
         num_examples / batch_size) for x in total_iou]
 
