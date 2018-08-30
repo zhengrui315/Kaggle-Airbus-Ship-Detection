@@ -177,9 +177,17 @@ def batch_gen(data_dir, label_df, batch_size=16, image_shape=None, augment=False
                 img_x = cv2.imread(os.path.join(data_dir,img_name))
 
                 if label_df.loc[img_name, 'HasShip'] == 0:
-                    img_y = rle_decode_all([])
+                    # skip images without ship
+                    continue
+                    # img_y = rle_decode_all([])
                 else:
                     img_y = rle_decode_all(label_df.loc[img_name,'EncodedPixelsList'])
+
+                # add noise by
+                img_x = np.add(img_x, 0.1 * 255 * np.random.randn(*img_x.shape))
+                # clip values greater than 255.0, smaller than 0.0 by
+                img_x = np.clip(img_x, a_min=0.0, a_max=255.0)
+
                 if image_shape:
                     img_x = cv2.resize(img_x, image_shape)
                     img_y = cv2.resize(img_y, image_shape)
@@ -189,7 +197,7 @@ def batch_gen(data_dir, label_df, batch_size=16, image_shape=None, augment=False
                     img_x, img_y = augment_img(img_x, img_y)
 
                 batch_x.append(img_x/255.0)
-                batch_y.append(img_y/255.0)
+                batch_y.append(img_y)
             yield np.array(batch_x), np.array(batch_y)
 
 
@@ -225,6 +233,7 @@ def masks_read(data_folder, max_sample = 2000):
 
 
 # https://www.kaggle.com/hmendonca/u-net-model-with-submission
+# check here for the clarification of the metric: https://www.kaggle.com/stkbailey/step-by-step-explanation-of-scoring-metric
 def IoU(y_true, y_pred, eps=1e-6):
     if tf.reduce_max(y_true) == 0.0:
         return IoU(1-y_true, 1-y_pred)
