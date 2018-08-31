@@ -178,7 +178,7 @@ class airbus_model():
         print("Validation loss: %.4f, accuracy: %.5f, iou: %.3f" % (validation_loss, validation_accuracy, validation_iou[-1]))
 
         for epoch in range(epochs):
-            print("Epochs {} ... \n".format(epoch + 1))
+            print("Epochs {} ... ".format(epoch + 1))
             for _ in tqdm(range(batches_per_epoch)):
                 X_batch, y_batch = next(training_batch_generator)
                 loss, _ = self.sess.run([self.loss, self.train_op], feed_dict={

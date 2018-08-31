@@ -2,12 +2,13 @@ from _utils import *
 import tensorflow as tf
 import numpy as np
 import pandas as pd
+from skimage.morphology import binary_opening, disk, label
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 def create_submit():
     with tf.Session() as sess:
-        model_dir = "./save_model"
+        model_dir = "./save_model/"
         saver = tf.train.import_meta_graph(os.path.join(model_dir, "airbus_model.meta"))
         saver.restore(sess, tf.train.latest_checkpoint(model_dir))
         # if not in the original path, do:
@@ -20,14 +21,17 @@ def create_submit():
         test_dir = "../data/test"
         image_id = np.array(os.listdir(test_dir))
         images_encode = {'ImageId':[], 'EncodedPixels':[]}
-        for img_name in tqdm(image_id[:10]):
+        for img_name in tqdm(image_id):
             image = cv2.imread(os.path.join(test_dir, img_name))/255.0
             # image = cv2.resize(image_shape)
             image = image[np.newaxis,:]
             pred = sess.run(pixel_pred, feed_dict={x_holder:image})
+
+            # https://www.kaggle.com/hmendonca/u-net-model-with-submission
+#            pred = binary_opening(pred>0.99, np.expand_dims(disk(2), -1))
             masks = multi_rle_encode(pred)
-            print(img_name)
-            print(masks)
+            #print(img_name)
+            #print(masks)
             if len(masks) > 0:
                 for mask in masks:
                     images_encode['ImageId'].append(img_name)
@@ -37,7 +41,7 @@ def create_submit():
                 images_encode['EncodedPixels'].append(None)
 
         submit_df = pd.DataFrame(images_encode)[['ImageId','EncodedPixels']]
-        submit_df.to_csv('submission.csv', index=False)
+        submit_df.to_csv('submission3.csv', index=False)
 
         return submit_df
 

@@ -7,7 +7,7 @@ import tensorflow as tf
 from _utils import *
 from tqdm import *
 from sklearn.model_selection import train_test_split
-import shutil
+#import shutil
 import argparse
 from datetime import datetime
 import pickle

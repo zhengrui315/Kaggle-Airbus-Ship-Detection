@@ -38,6 +38,7 @@ def rle_encode(arr_mask):
 
 def multi_rle_encode(img):
     """ find all connected regions and encode them separately """
+    # http://scikit-image.org/docs/dev/api/skimage.morphology.html#skimage.morphology.label
     labels = label(img) # background=0
     return [rle_encode(labels==k) for k in np.unique(labels[labels>0])]
 
@@ -48,6 +49,9 @@ def rle_decode(rle_mask, shape=(768, 768)):
     shape: (height,width) of array to return 
     Returns 2-dim numpy array, 1 - mask, 0 - background
     """
+    if not rle_mask or len(rle_mask) == 0:
+        return np.zeros(shape, dtype=np.int16)
+
     s = rle_mask.split()
     starts, lengths = [np.asarray(x, dtype=int) for x in (s[0:][::2], s[1:][::2])]
     starts -= 1
@@ -84,15 +88,14 @@ def rle_decode_all(rle_mask_list):
 ##############################
 # https://github.com/vxy10/ImageAugmentation
 # https://docs.opencv.org/3.0-beta/doc/py_tutorials/py_imgproc/py_geometric_transformations/py_geometric_transformations.html
-def augment_brightness_camera_images(image):
-    image1 = cv2.cvtColor(image,cv2.COLOR_RGB2HSV)
+def augment_brightness_camera_images(img):
+    img = cv2.cvtColor(np.float32(img),cv2.COLOR_RGB2HSV)
     random_bright = 1.0 + 0.2*np.random.uniform()
+    img[:,:,2] = img[:,:,2]*random_bright
+    img = cv2.cvtColor(img,cv2.COLOR_HSV2RGB)
+    return img
 
-    image1[:,:,2] = image1[:,:,2]*random_bright
-    image1 = cv2.cvtColor(image1,cv2.COLOR_HSV2RGB)
-    return image1
-
-def transform_image(img,ang_range,shear_range,trans_range,brightness=0):
+def transform_image(img_x, img_y,ang_range,shear_range,trans_range,brightness=0):
     '''
     This function transforms images to generate new images.
     The function takes in following arguments,
@@ -101,13 +104,10 @@ def transform_image(img,ang_range,shear_range,trans_range,brightness=0):
     3- shear_range: Range of values to apply affine transform to
     4- trans_range: Range of values to apply translations over.
 
-    A Random uniform distribution is used to generate different parameters for transformation
-
     '''
     # Rotation
-
     ang_rot = np.random.uniform(ang_range)-ang_range/2
-    rows,cols = img.shape[:2]
+    rows,cols = img_y.shape[:2]
     Rot_M = cv2.getRotationMatrix2D((cols/2,rows/2),ang_rot,1) # rotation about the center by angle ang_rot without scaling
 
     # Translation
@@ -122,15 +122,18 @@ def transform_image(img,ang_range,shear_range,trans_range,brightness=0):
     # pts2 = np.float32([[pt1,5],[pt2,pt1],[5,pt2]])
     # shear_M = cv2.getAffineTransform(pts1,pts2)
 
-    img = cv2.warpAffine(img,Rot_M,(cols,rows))
-    img = cv2.warpAffine(img,Trans_M,(cols,rows))
-    # img = cv2.warpAffine(img,shear_M,(cols,rows))
+    img_x = cv2.warpAffine(img_x,Rot_M,(cols,rows))
+    img_x = cv2.warpAffine(img_x,Trans_M,(cols,rows))
+    # img_x = cv2.warpAffine(img_x,shear_M,(cols,rows))
+    img_y = cv2.warpAffine(img_y,Rot_M,(cols,rows))
+    img_y = cv2.warpAffine(img_y,Trans_M,(cols,rows))
+    # img_y = cv2.warpAffine(img_y,shear_M,(cols,rows))
 
     # Brightness
-    # if brightness == 1:
-    #  img = augment_brightness_camera_images(img)
+    if brightness == 1:
+        img_x = augment_brightness_camera_images(img_x)
 
-    return img
+    return img_x, img_y
 
 
 def augment_img(img_x, img_y):
@@ -143,8 +146,7 @@ def augment_img(img_x, img_y):
     #img_x = rotate(img_x, angle, reshape=False)
     #img_y = rotate(img_y, angle, reshape=False)
 
-    img_x = transform_image(img_x, 20, 10, 40, brightness=1)
-    img_y = transform_image(img_y, 20, 10, 40, brightness=0)
+    img_x, img_y = transform_image(img_x, img_y, 10, 10, 40, brightness=1)
     flip_proba = np.random.random()
     if flip_proba > 0.75: # no flipping
         return img_x, img_y
@@ -157,7 +159,7 @@ def augment_img(img_x, img_y):
 
 
 
-def batch_gen(data_dir, label_df, batch_size=16, image_shape=None, augment=False):
+def batch_gen(data_dir, label_df, batch_size=16, is_training=True, image_shape=None, augment=False):
     """
     data_dir:       the directory of JPG images for training
     label_df:       the dataframe with encoded mask strings for each image. The index is image filename
@@ -177,14 +179,16 @@ def batch_gen(data_dir, label_df, batch_size=16, image_shape=None, augment=False
                 img_x = cv2.imread(os.path.join(data_dir,img_name))
 
                 if label_df.loc[img_name, 'HasShip'] == 0:
-                    # skip images without ship
-                    continue
-                    # img_y = rle_decode_all([])
+                    if is_training:
+                        # skip images without ship during training
+                        continue
+                    else:
+                        img_y = rle_decode_all([])
                 else:
                     img_y = rle_decode_all(label_df.loc[img_name,'EncodedPixelsList'])
 
                 # add noise by
-                img_x = np.add(img_x, 0.1 * 255 * np.random.randn(*img_x.shape))
+                img_x = np.add(img_x, 0.05 * 255 * np.random.randn(*img_x.shape))
                 # clip values greater than 255.0, smaller than 0.0 by
                 img_x = np.clip(img_x, a_min=0.0, a_max=255.0)
 
@@ -235,10 +239,30 @@ def masks_read(data_folder, max_sample = 2000):
 # https://www.kaggle.com/hmendonca/u-net-model-with-submission
 # check here for the clarification of the metric: https://www.kaggle.com/stkbailey/step-by-step-explanation-of-scoring-metric
 def IoU(y_true, y_pred, eps=1e-6):
-    if tf.reduce_max(y_true) == 0.0:
-        return IoU(1-y_true, 1-y_pred)
-    intersection = tf.reduce_sum(y_true * y_pred, axis=[1,2])
-    union = tf.reduce_sum(y_true, axis=[1,2]) + tf.reduce_sum(y_pred, axis=[1,2]) - intersection
-    iou = (intersection + eps) / (union + eps)
-    return tf.reduce_mean(tf.reduce_sum(y_true, axis=[1,2])), tf.reduce_mean(tf.reduce_sum(y_pred, axis=[1,2])), tf.reduce_mean(intersection), tf.reduce_mean(union), tf.reduce_mean(iou)
+    # if tf.reduce_max(y_true) == 0.0:
+    #     return IoU(1-y_true, 1-y_pred)
+    TP = tf.reduce_sum(y_true * y_pred, axis=[1,2])
+    FP = tf.reduce_sum((1 - y_true) * y_pred, axis=[1,2])
+    FN = tf.reduce_sum(y_true * (1 - y_pred), axis=[1,2])
+    TN = tf.reduce_sum((1 - y_true) * (1 - y_pred), axis=[1,2])
+    #intersection = TP
+    # union = TP + FP + FN
+    iou = (TP + eps)/ (TP + FP + FN + eps)
 
+    # return (TP, FP, FN, TN, iou)
+    return tf.reduce_mean(TP), tf.reduce_mean(FP), tf.reduce_mean(FN), tf.reduce_mean(TN), tf.reduce_mean(iou)
+
+# def F2_score(y_true, y_pred, beta=2):
+#     """
+#     """
+#
+#     f2 = tf.zeros(tf.shape(y_pred)[0])
+#     for threshold in range(0.5, 1, 0.05):
+#
+#         TP = tf.reduce_sum(y_true * y_pred, axis=1)
+#         FP = tf.reduce_sum((1 - y_true) * y_pred, axis=1)
+#         FN = tf.reduce_sum(y_true * (1 - y_pred), axis=1)
+#         # TN = tf.reduce_sum((1 - y_true) * (1 - y_pred), axis=1)
+#         tmp = (1 + beta**2) * TP / ((1+beta**2)*TP + (beta**2) * FN + FP)
+#         f2 = tf.add(f2, tmp)
+#     return tf.reduce_mean(f2/10)
