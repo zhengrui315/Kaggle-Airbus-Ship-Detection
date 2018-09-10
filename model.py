@@ -26,16 +26,12 @@ class airbus_base():
         self.final = self.conv_layers()
         self.out = tf.sigmoid(self.final, name="final_out")
 
-        reshaped_logits = tf.reshape(self.final, (-1, self.image_shape[0] * self.image_shape[1]))
+        reshaped_logits = tf.reshape(self.out, (-1, self.image_shape[0] * self.image_shape[1]))
         reshaped_labels = tf.reshape(self.y_holder, (-1, self.image_shape[0] * self.image_shape[1]))
 
-        # https://www.jeremyjordan.me/semantic-segmentation/#fully_convolutional
-        self.bce_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=reshaped_logits, labels=reshaped_labels), name="bce_loss")
-        numerator = 2 * tf.reduce_sum(reshaped_logits * reshaped_labels, axis=1)
-        denominator = tf.reduce_sum(reshaped_logits + reshaped_labels, axis=1)
-        self.dice_loss = 1 - tf.reduce_mean(numerator / denominator, name="dice_loss")
-        self.loss = tf.add(self.bce_loss, self.dice_loss, name="cross_entropy")
-
+        self.focal_loss = tf.identity(20 * Focal_Loss(reshaped_logits, reshaped_labels), name="focal_loss")
+        self.dice_loss = tf.identity(Dice_Loss(reshaped_logits, reshaped_labels), name="dice_loss")
+        self.loss = tf.add(self.focal_loss, self.dice_loss, name="total_loss")
         self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss, name="train_op")
 
         self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
@@ -80,27 +76,28 @@ class airbus_base():
         samples_per_epoch = len(train_ids)
         batches_per_epoch = samples_per_epoch // batch_size
 
-        training_loss_metrics = []
-        training_accuracy_metrics = []
-        training_iou_metrics = []
-        validation_loss_metrics = []
-        validation_accuracy_metrics = []
-        validation_iou_metrics = []
+        train_loss_metrics = []
+        train_acc_metrics = []
+        train_iou_metrics = []
+        val_loss_metrics = []
+        val_acc_metrics = []
+        val_iou_metrics = []
 
         # early stopping initialization
         if self.continue_training == False:
-            best_validation_loss = np.infty
+            best_val_loss = np.infty
             check_progress_num = 0
         else:
             with open(os.path.join("./save_model", "valid_loss"), "rb") as f:
                 val_loss_his = pickle.load(f)
-            best_validation_loss = min(val_loss_his)
-            check_progress_num = len(val_loss_his) - 1 - val_loss_his.index(best_validation_loss)
+            best_val_loss = np.infty #min(val_loss_his)
+            check_progress_num = 0 #len(val_loss_his) - 1 - val_loss_his.index(best_val_loss)
         max_check_progress_num = 5
 
         print("Evaluating validation in the beginning ...")
-        validation_loss, validation_accuracy, validation_iou = self.evaluate(data_folder, valid_df)
-        print("Validation loss: %.6f, accuracy: %.5f, iou: %.3f" % (validation_loss, validation_accuracy, validation_iou[-1]))
+        val_loss, val_iou = self.evaluate(data_folder, valid_df)
+        print("Validation loss: %.6f, %.6f, %.6f" % (val_loss[0], val_loss[1], val_loss[2]))
+        print("Valication iou:", val_iou)
 
         for epoch in range(epochs):
             print("Epochs {} ... ".format(epoch + 1))
@@ -111,25 +108,25 @@ class airbus_base():
                     self.y_holder: y_batch})
 
             print("Evaluating validation...")
-            validation_loss, validation_accuracy, validation_iou = self.evaluate(data_folder, valid_df)
-            validation_loss_metrics.append(validation_loss)
-            validation_accuracy_metrics.append(validation_accuracy)
-            validation_iou_metrics.append(validation_iou)
-            print("Validation loss: %.6f, accuracy: %.5f, iou: %.5f" % (validation_loss, validation_accuracy, validation_iou[-1]))
-            print("iou:", validation_iou)
+            val_loss, val_iou = self.evaluate(data_folder, valid_df)
+            val_loss_metrics.append(val_loss)
+            #val_acc_metrics.append(val_acc)
+            val_iou_metrics.append(val_iou)
+            print("Validation loss: %.6f, %.6f, %.6f" % (val_loss[0],val_loss[1],val_loss[2]))
+            print("Valication iou:", val_iou)
 
-            print("Evaluating training...")
-            training_loss, training_accuracy, training_iou = validation_loss, validation_accuracy, validation_iou# self.evaluate(data_folder, train_df)
-            training_loss_metrics.append(training_loss)
-            training_accuracy_metrics.append(training_accuracy)
-            training_iou_metrics.append(training_iou)
-            print("Training loss: %.6f, accuracy: %.5f, iou: %.3f" % (training_loss, training_accuracy, training_iou[-1]))
-            # self.debug2(data_folder, label_df)
+            # print("Evaluating training...")
+            # train_loss, train_focal, train_dice, train_acc, TP, FP, FN, TN, train_iou = self.evaluate(data_folder, train_df)
+            # train_loss_metrics.append(train_loss)
+            # #train_acc_metrics.append(train_acc)
+            # train_iou_metrics.append(train_iou)
+            # print("Validation loss: %.6f, %.6f, %.6f, accuracy: %.5f" % (train_loss, train_focal, train_dice, train_acc))
+            # print("iou:", TP, FP, FN, TN, train_iou)
 
-            if validation_loss < best_validation_loss:
+            if val_loss < best_val_loss:
                 print("saving checkpoint at epoch {} ...".format(epoch+1))
                 #self.saver.save(self.sess, os.path.join(self.model_dir, "airbus_model"))
-                best_validation_loss = validation_loss
+                best_val_loss = val_loss
                 check_progress_num = 0
             else:
                 check_progress_num += 1
@@ -138,29 +135,27 @@ class airbus_base():
                     break
 
         print("loss, acc, iou: ")
-        print(validation_loss_metrics)
-        print(validation_accuracy_metrics)
-        print(validation_iou_metrics)
+        print(val_loss_metrics)
+        #print(val_acc_metrics)
+        print(val_iou_metrics)
 
         print("Saving History ...")
-        #self.save_history((training_loss_metrics, training_accuracy_metrics, training_iou_metrics, validation_loss_metrics,
-        #        validation_accuracy_metrics, validation_iou_metrics))
+        #self.save_history((train_loss_metrics, train_acc_metrics, train_iou_metrics, val_loss_metrics, val_acc_metrics, val_iou_metrics))
 
     def evaluate(self, data_folder, label_df):
         batch_size = 16
         data_generator = batch_gen(data_folder, label_df, batch_size, is_training=False, image_shape=self.image_shape, augment=False)
         num_examples = (label_df.shape[0] // batch_size) * batch_size
-        total_loss = 0
-        total_acc = 0
-        total_iou = [0,0,0,0,0]
+
+        loss = [self.loss, self.focal_loss, self.dice_loss]
+        total_loss = [0,0,0] # total_loss, total_focal_loss, total_dice_loss
+        total_iou = [0,0,0,0,0] #  acc, TP, FP, FN, TN, iou
         for _ in tqdm(range(0, num_examples, batch_size)):
             X_batch, y_batch = next(data_generator)
-            loss, accuracy, iou = self.sess.run([self.loss, self.accuracy, self.iou],
-                                                feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
-            total_loss += loss
-            total_acc += accuracy
-            total_iou = [total_iou[i] + iou[i] for i in range(len(iou))]
-        return total_loss / (num_examples / batch_size), total_acc / (num_examples / batch_size), [x / (num_examples / batch_size) for x in total_iou]
+            results = self.sess.run([loss, self.iou], feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
+            total_loss = [total_loss[i] + results[0][i] for i in range(len(results[0]))]
+            total_iou = [total_iou[i] + results[1][i] for i in range(len(results[1]))]
+        return [x / (num_examples / batch_size) for x in total_loss], [x / (num_examples / batch_size) for x in total_iou]
 
 
     def save_history(self, metrics):
@@ -280,6 +275,8 @@ class airbus_scratch(airbus_base):
                                           bias_initializer=tf.constant_initializer(0.1),
                                           kernel_initializer=tf.truncated_normal_initializer(stddev=0.1), activation=None, trainable=True, name='logits')
         return tf.squeeze(logits, axis=-1) # remove the channel dimension which has size 1
+
+
 
 
 class airbus_vgg(airbus_base):

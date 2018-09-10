@@ -266,3 +266,20 @@ def IoU(y_true, y_pred, eps=1e-6):
 #         tmp = (1 + beta**2) * TP / ((1+beta**2)*TP + (beta**2) * FN + FP)
 #         f2 = tf.add(f2, tmp)
 #     return tf.reduce_mean(f2/10)
+
+
+def BCE_Loss(logits, labels):
+    """  binary cross entropy as the loss function, logits are NN predictions before applying activation function  """
+    return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=labels))
+
+def Dice_Loss(logits, labels):
+    """  dice loss function, logits are probability prediction, after sigmoid function """
+    numerator = 2 * tf.reduce_sum(logits * labels, axis=1)
+    denominator = tf.reduce_sum(logits + labels, axis=1)
+    return - tf.reduce_mean(tf.log((numerator + 1e-6) / (denominator + 1e-6)))
+
+
+def Focal_Loss(logits, labels, gamma=1):
+    """  focal loss function, logits are probability prediction, after sigmoid function """
+    return - tf.reduce_mean(labels * tf.pow(1 - logits, gamma) * tf.log(logits) + (1 - labels)* tf.pow(logits, gamma) * tf.log(1 - logits))
+
