@@ -279,7 +279,14 @@ def Dice_Loss(logits, labels):
     return - tf.reduce_mean(tf.log((numerator + 1e-6) / (denominator + 1e-6)))
 
 
-def Focal_Loss(logits, labels, gamma=1):
+def Focal_Loss(logits, labels, alpha=0.9, gamma=1):
     """  focal loss function, logits are probability prediction, after sigmoid function """
-    return - tf.reduce_mean(labels * tf.pow(1 - logits, gamma) * tf.log(logits) + (1 - labels)* tf.pow(logits, gamma) * tf.log(1 - logits))
-
+    # labels = tf.convert_to_tensor(labels)
+    # labels = tf.cast(labels, logits.dtype)
+    ones = tf.ones_like(labels)
+    pt = tf.where(tf.equal(labels, ones), logits, 1.0 - logits)
+    tmp = tf.scalar_mul(alpha, ones)
+    alpha_t = tf.where(tf.equal(labels, ones), tmp, 1.0 - tmp)
+    return - 20. * tf.reduce_mean(alpha_t * tf.pow(1.0 - pt, gamma) * tf.log(pt + 1e-8))
+    # define some scaling factor to bring Focal_Loss to be at the same scale as Dice_Loss.
+    

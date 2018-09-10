@@ -7,8 +7,11 @@ import pickle
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
+debug = 1   # 100 for testing the code. It should be switched back to 1 for training.
+
+
 class airbus_base():
-    def __init__(self, image_shape, model_dir, continue_training=False, learning_rate=0.005):
+    def __init__(self, image_shape, model_dir, continue_training=False, learning_rate=0.002):
         self.image_shape = image_shape
         self.model_dir = model_dir
         if not os.path.isdir(self.model_dir):
@@ -29,9 +32,11 @@ class airbus_base():
         reshaped_logits = tf.reshape(self.out, (-1, self.image_shape[0] * self.image_shape[1]))
         reshaped_labels = tf.reshape(self.y_holder, (-1, self.image_shape[0] * self.image_shape[1]))
 
-        self.focal_loss = tf.identity(20 * Focal_Loss(reshaped_logits, reshaped_labels), name="focal_loss")
+
+        self.focal_loss = tf.identity(Focal_Loss(reshaped_logits, reshaped_labels), name="focal_loss")
         self.dice_loss = tf.identity(Dice_Loss(reshaped_logits, reshaped_labels), name="dice_loss")
         self.loss = tf.add(self.focal_loss, self.dice_loss, name="total_loss")
+
         self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss, name="train_op")
 
         self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
@@ -90,43 +95,46 @@ class airbus_base():
         else:
             with open(os.path.join("./save_model", "valid_loss"), "rb") as f:
                 val_loss_his = pickle.load(f)
-            best_val_loss = np.infty #min(val_loss_his)
-            check_progress_num = 0 #len(val_loss_his) - 1 - val_loss_his.index(best_val_loss)
+            best_val_loss = min(val_loss_his)
+            check_progress_num = len(val_loss_his) - 1 - val_loss_his.index(best_val_loss)
         max_check_progress_num = 5
 
         print("Evaluating validation in the beginning ...")
-        val_loss, val_iou = self.evaluate(data_folder, valid_df)
+        val_loss, val_acc, val_iou = self.evaluate(data_folder, valid_df)
         print("Validation loss: %.6f, %.6f, %.6f" % (val_loss[0], val_loss[1], val_loss[2]))
+        print("Valication accuracy: %.5f" % val_acc)
         print("Valication iou:", val_iou)
 
         for epoch in range(epochs):
             print("Epochs {} ... ".format(epoch + 1))
-            for _ in tqdm(range(batches_per_epoch)):
+            for _ in tqdm(range(batches_per_epoch//debug)):
                 X_batch, y_batch = next(training_batch_generator)
                 loss, _ = self.sess.run([self.loss, self.train_op], feed_dict={
                     self.x_holder: X_batch,
                     self.y_holder: y_batch})
 
             print("Evaluating validation...")
-            val_loss, val_iou = self.evaluate(data_folder, valid_df)
-            val_loss_metrics.append(val_loss)
-            #val_acc_metrics.append(val_acc)
-            val_iou_metrics.append(val_iou)
+            val_loss, val_acc, val_iou = self.evaluate(data_folder, valid_df)
+            val_loss_metrics.append(val_loss[0])
+            val_acc_metrics.append(val_acc)
+            val_iou_metrics.append(val_iou[4])
             print("Validation loss: %.6f, %.6f, %.6f" % (val_loss[0],val_loss[1],val_loss[2]))
+            print("Valication accuracy: %.5f" % val_acc)
             print("Valication iou:", val_iou)
 
-            # print("Evaluating training...")
-            # train_loss, train_focal, train_dice, train_acc, TP, FP, FN, TN, train_iou = self.evaluate(data_folder, train_df)
-            # train_loss_metrics.append(train_loss)
-            # #train_acc_metrics.append(train_acc)
-            # train_iou_metrics.append(train_iou)
-            # print("Validation loss: %.6f, %.6f, %.6f, accuracy: %.5f" % (train_loss, train_focal, train_dice, train_acc))
-            # print("iou:", TP, FP, FN, TN, train_iou)
+            print("Evaluating training...")
+            train_loss, train_acc, train_iou = self.evaluate(data_folder, train_df.sample(n=80))
+            train_loss_metrics.append(train_loss[0])
+            train_acc_metrics.append(train_acc)
+            train_iou_metrics.append(train_iou[4])
+            print("Training loss: %.6f, %.6f, %.6f" % (train_loss[0],train_loss[1],train_loss[2]))
+            print("Training accuracy: %.5f" % train_acc)
+            print("Training iou:", train_iou)
 
-            if val_loss < best_val_loss:
+            if val_loss[0] < best_val_loss:
                 print("saving checkpoint at epoch {} ...".format(epoch+1))
                 #self.saver.save(self.sess, os.path.join(self.model_dir, "airbus_model"))
-                best_val_loss = val_loss
+                best_val_loss = val_loss[0]
                 check_progress_num = 0
             else:
                 check_progress_num += 1
@@ -136,11 +144,11 @@ class airbus_base():
 
         print("loss, acc, iou: ")
         print(val_loss_metrics)
-        #print(val_acc_metrics)
+        print(val_acc_metrics)
         print(val_iou_metrics)
 
         print("Saving History ...")
-        #self.save_history((train_loss_metrics, train_acc_metrics, train_iou_metrics, val_loss_metrics, val_acc_metrics, val_iou_metrics))
+        self.save_history((train_loss_metrics, train_acc_metrics, train_iou_metrics, val_loss_metrics, val_acc_metrics, val_iou_metrics))
 
     def evaluate(self, data_folder, label_df):
         batch_size = 16
@@ -149,24 +157,23 @@ class airbus_base():
 
         loss = [self.loss, self.focal_loss, self.dice_loss]
         total_loss = [0,0,0] # total_loss, total_focal_loss, total_dice_loss
+        total_acc = 0
         total_iou = [0,0,0,0,0] #  acc, TP, FP, FN, TN, iou
-        for _ in tqdm(range(0, num_examples, batch_size)):
+        for _ in tqdm(range(0, num_examples//debug, batch_size)):
             X_batch, y_batch = next(data_generator)
-            results = self.sess.run([loss, self.iou], feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
+            results = self.sess.run([loss, self.accuracy, self.iou], feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
             total_loss = [total_loss[i] + results[0][i] for i in range(len(results[0]))]
-            total_iou = [total_iou[i] + results[1][i] for i in range(len(results[1]))]
-        return [x / (num_examples / batch_size) for x in total_loss], [x / (num_examples / batch_size) for x in total_iou]
+            total_acc += results[1]
+            total_iou = [total_iou[i] + results[2][i] for i in range(len(results[2]))]
+        return [x / (num_examples / batch_size) for x in total_loss], total_acc / (num_examples / batch_size), [x / (num_examples / batch_size) for x in total_iou]
 
 
     def save_history(self, metrics):
         print("Saving the history ...")
 
         train_loss, train_accuracy, train_iou, valid_loss, valid_accuracy, valid_iou = metrics
-        # metrics_list = ("train_loss", "train_accuracy", "train_iou", "valid_loss", "valid_accuracy", "valid_iou")
 
         if self.continue_training:
-            #    for metric in metrics_list:
-            #        with open(os.path.join(self.model_dir, metric), "rb") as f:
 
             with open(os.path.join(self.model_dir, "train_loss"), "rb") as f:
                 train_loss = pickle.load(f) + train_loss
@@ -279,10 +286,10 @@ class airbus_scratch(airbus_base):
 
 
 
-class airbus_vgg(airbus_base):
+class VGG16(airbus_base):
     def __init__(self, image_shape = (768, 768), model_dir = "./save_model", continue_training = False, vgg_path = "../vgg/vgg16_weights.npz"):
         self.vgg_path = vgg_path
-        super(airbus_vgg,self).__init__(image_shape=image_shape, model_dir=model_dir, continue_training=continue_training)
+        super(VGG16,self).__init__(image_shape=image_shape, model_dir=model_dir, continue_training=continue_training)
 
     def conv_layers(self):
         ############   down ##############
@@ -323,37 +330,11 @@ class airbus_vgg(airbus_base):
                                    trainable=False, name='vgg_conv5_3')
         pool5 = tf.layers.max_pooling2d(conv5_3, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool5')
 
+
         #############  up  ###################
-        # https://datascience.stackexchange.com/questions/26451/how-to-calculate-the-output-shape-of-conv2d-transpose
-        layer6_1 = tf.layers.conv2d_transpose(pool5, filters=512, kernel_size=(3, 3), strides=(2, 2), padding='same',
-                                              bias_initializer=tf.constant_initializer(0.1),
-                                              kernel_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                                              activation=tf.nn.relu, trainable=True, name='new_layer6_1')
-        layer6_2 = tf.concat([pool4, layer6_1], axis=-1, name='new_layer6_2')
+        down_inputs = [pool5, pool4, pool3, pool2, pool1]
+        logits = self.upsampling(down_inputs)
 
-        layer7_1 = tf.layers.conv2d_transpose(layer6_2, filters=256, kernel_size=(3, 3), strides=(2, 2), padding='same',
-                                              bias_initializer=tf.constant_initializer(0.1),
-                                              kernel_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                                              activation=tf.nn.relu, trainable=True, name='new_layer7_1')
-        layer7_2 = tf.concat([pool3, layer7_1], axis=-1, name='new_layer7_2')
-
-        layer8_1 = tf.layers.conv2d_transpose(layer7_2, filters=128, kernel_size=(3, 3), strides=(2, 2), padding='same',
-                                              bias_initializer=tf.constant_initializer(0.1),
-                                              kernel_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                                              activation=tf.nn.relu, trainable=True, name='new_layer8_1')
-        layer8_2 = tf.concat([pool2, layer8_1], axis=-1, name='new_layer8_2')
-
-        layer9_1 = tf.layers.conv2d_transpose(layer8_2, filters=64, kernel_size=(3, 3), strides=(2, 2), padding='same',
-                                              bias_initializer=tf.constant_initializer(0.1),
-                                              kernel_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                                              activation=tf.nn.relu, trainable=True, name='new_layer9_1')
-        layer9_2 = tf.concat([pool1, layer9_1], axis=-1, name='new_layer9_2')
-
-        # the last layer should be linear, no activation function
-        logits = tf.layers.conv2d_transpose(layer9_2, filters=1, kernel_size=(3, 3), strides=(2, 2), padding='same',
-                                            bias_initializer=tf.constant_initializer(0.1),
-                                            kernel_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                                            activation=None, trainable=True, name='new_logits')
         return tf.squeeze(logits, axis=-1)  # remove the channel dimension which has size 1
 
     def load_weights(self):
@@ -370,3 +351,5 @@ class airbus_vgg(airbus_base):
             self.sess.run(d[new_name].assign(weights[old_name]))
             # print(old_name)
 
+    def upsampling(self, down_inputs):
+        raise NotImplementedError(" upsampling layers need to be implemented")
