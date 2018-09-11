@@ -236,7 +236,12 @@ def masks_read(data_folder, max_sample = 2000):
 
 
 
-# https://www.kaggle.com/hmendonca/u-net-model-with-submission
+
+
+#######################################
+#####   Metrics, Loss Functions   #####
+#######################################
+
 # check here for the clarification of the metric: https://www.kaggle.com/stkbailey/step-by-step-explanation-of-scoring-metric
 def IoU(y_true, y_pred, eps=1e-6):
     # if tf.reduce_max(y_true) == 0.0:
@@ -252,20 +257,30 @@ def IoU(y_true, y_pred, eps=1e-6):
     # return (TP, FP, FN, TN, iou)
     return tf.reduce_mean(TP), tf.reduce_mean(FP), tf.reduce_mean(FN), tf.reduce_mean(TN), tf.reduce_mean(iou)
 
-# def F2_score(y_true, y_pred, beta=2):
-#     """
-#     """
-#
-#     f2 = tf.zeros(tf.shape(y_pred)[0])
-#     for threshold in range(0.5, 1, 0.05):
-#
-#         TP = tf.reduce_sum(y_true * y_pred, axis=1)
-#         FP = tf.reduce_sum((1 - y_true) * y_pred, axis=1)
-#         FN = tf.reduce_sum(y_true * (1 - y_pred), axis=1)
-#         # TN = tf.reduce_sum((1 - y_true) * (1 - y_pred), axis=1)
-#         tmp = (1 + beta**2) * TP / ((1+beta**2)*TP + (beta**2) * FN + FP)
-#         f2 = tf.add(f2, tmp)
-#     return tf.reduce_mean(f2/10)
+def F2_score(y_true, y_pred, beta=2):
+    """
+    """
+    #F2 = tf.zeros(tf.shape(y_pred)[0])
+    F2 = []
+    for i in range(len(y_pred)):
+        pred_masks = label(y_pred[i])
+        true_masks = label(y_true[i])
+        f2 = []
+        for threshold in range(0.5, 1, 0.05):
+            tp = 0
+            fp = tf.shape(pred_masks)[0]
+            fn = tf.shape(true_masks)[0]
+            for true_mask in true_masks:
+                for pred_mask in pred_masks:
+                    iou = IoU(true_mask, pred_mask)[-1]
+                    if iou >= threshold:
+                        tp += 1
+                        fp -= 1
+                        fn -= 1
+                        break
+            f2.append((1 + beta**2) * tp / ((1+beta**2)*tp + (beta**2) * fn + fp))
+        F2.append(tf.reduce_mean(f2))
+    return tf.reduce_mean(F2)
 
 
 def BCE_Loss(logits, labels):
@@ -279,7 +294,7 @@ def Dice_Loss(logits, labels):
     return - tf.reduce_mean(tf.log((numerator + 1e-6) / (denominator + 1e-6)))
 
 
-def Focal_Loss(logits, labels, alpha=0.9, gamma=1):
+def Focal_Loss(logits, labels, alpha=0.7, gamma=2):
     """  focal loss function, logits are probability prediction, after sigmoid function """
     # labels = tf.convert_to_tensor(labels)
     # labels = tf.cast(labels, logits.dtype)

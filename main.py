@@ -11,19 +11,20 @@ class airbus_vgg(VGG16):
         super(airbus_vgg, self).__init__(**kwargs)
 
     def upsampling(self, down_inputs):
-        layer6 = self.up_block([down_inputs[1], down_inputs[0]], 512, 6)
-        layer7 = self.up_block([down_inputs[2], layer6], 256, 7)
-        layer8 = self.up_block([down_inputs[3], layer7], 128, 8)
-        layer9 = self.up_block([down_inputs[4], layer8], 64, 9)
-        # the last layer should be linear, no activation function
-        layer10 = tf.layers.conv2d_transpose(layer9, filters=16, kernel_size=(3, 3), strides=(2, 2), padding='same',
-                                            bias_initializer=tf.zeros_initializer, #tf.constant_initializer(0.1),
-                                            kernel_initializer=tf.truncated_normal_initializer(stddev=0.05),
-                                            activation=tf.nn.relu, trainable=True, name='new_layer_10')
-        logits = tf.layers.conv2d(layer10, filters=1, kernel_size=(3, 3), padding='same',
-                         bias_initializer=tf.zeros_initializer,  # tf.constant_initializer(0.1),
-                         kernel_initializer=tf.truncated_normal_initializer(stddev=0.05),
-                         activation=None, trainable=True, name='new_logits')
+        with tf.variable_scope('upsample'):
+            layer6 = self.up_block([down_inputs[1], down_inputs[0]], 512, 6)
+            layer7 = self.up_block([down_inputs[2], layer6], 256, 7)
+            layer8 = self.up_block([down_inputs[3], layer7], 128, 8)
+            layer9 = self.up_block([down_inputs[4], layer8], 64, 9)
+            # the last layer should be linear, no activation function
+            layer10 = tf.layers.conv2d_transpose(layer9, filters=16, kernel_size=(3, 3), strides=(2, 2), padding='same',
+                                                bias_initializer=tf.zeros_initializer, #tf.constant_initializer(0.1),
+                                                kernel_initializer=tf.truncated_normal_initializer(stddev=0.05),
+                                                activation=tf.nn.relu, trainable=True, name='new_layer_10')
+            logits = tf.layers.conv2d(layer10, filters=1, kernel_size=(3, 3), padding='same',
+                             bias_initializer=tf.zeros_initializer,  # tf.constant_initializer(0.1),
+                             kernel_initializer=tf.truncated_normal_initializer(stddev=0.05),
+                             activation=None, trainable=True, name='new_logits')
         return logits
 
 
