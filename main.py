@@ -28,22 +28,22 @@ class airbus_vgg(VGG16):
         return logits
 
 
-    def up_block(self, inputs, filters, num):
+    def up_block(self, inputs, filters, block_id):
         """  inputs = [down_input, up_input]  """
         layer_1 = tf.layers.conv2d_transpose(inputs[1], filters=filters // 2, kernel_size=(3, 3), strides=(2, 2),
                                              padding='same',
                                              bias_initializer=tf.zeros_initializer, #tf.constant_initializer(0.1),
                                              kernel_initializer=tf.truncated_normal_initializer(stddev=0.05),
-                                             activation=tf.nn.relu, trainable=True, name='new_layer' + str(num) + '_1')
-        layer_2 = tf.concat([inputs[0], layer_1], axis=-1, name='new_layer' + str(num) + '_2')
+                                             activation=tf.nn.relu, trainable=True, name='new_layer' + str(block_id) + '_1')
+        layer_2 = tf.concat([inputs[0], layer_1], axis=-1, name='new_layer' + str(block_id) + '_2')
         layer_3 = tf.layers.conv2d(layer_2, filters=filters, kernel_size=(3, 3), padding='same',
                                    bias_initializer=tf.zeros_initializer, #tf.constant_initializer(0.1),
                                    kernel_initializer=tf.truncated_normal_initializer(stddev=0.05),
-                                   activation=tf.nn.relu, trainable=True, name='new_layer' + str(num) + '_3')
+                                   activation=tf.nn.relu, trainable=True, name='new_layer' + str(block_id) + '_3')
         layer_4 = tf.layers.conv2d(layer_3, filters=filters, kernel_size=(3, 3), padding='same',
                                    bias_initializer=tf.zeros_initializer, #tf.constant_initializer(0.1),
                                    kernel_initializer=tf.truncated_normal_initializer(stddev=0.05),
-                                   activation=tf.nn.relu, trainable=True, name='new_layer' + str(num) + '_4')
+                                   activation=tf.nn.relu, trainable=True, name='new_layer' + str(block_id) + '_4')
         return layer_4
 
 
@@ -65,12 +65,12 @@ def main():
     NUM_EPOCHS = args.num_epochs
     CONTINUE_TRAINING = args.continues_training
 
-    #image_shape = (224, 224)
+    image_shape = (224, 224)
     data_folder = os.path.join(os.getcwd(), '../data/train')
     model_folder = os.path.join(os.getcwd(), 'save_model')
     label_df = masks_read(os.path.join(os.getcwd(), '../data'))
 
-    airbus_model = airbus_vgg(model_dir=model_folder, continue_training=CONTINUE_TRAINING)
+    airbus_model = airbus_vgg(image_shape=image_shape, model_dir=model_folder, continue_training=CONTINUE_TRAINING)
 
     airbus_model.train(NUM_EPOCHS, data_folder, label_df)
 

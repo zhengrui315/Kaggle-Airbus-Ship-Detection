@@ -259,10 +259,12 @@ def IoU(y_true, y_pred, eps=1e-6):
 
 def F2_score(y_true, y_pred, beta=2):
     """
+    needs to be fixed
     """
-    #F2 = tf.zeros(tf.shape(y_pred)[0])
+    return 0.0
+    F2 = tf.zeros(tf.shape(y_pred)[0])
     F2 = []
-    for i in range(len(y_pred)):
+    for i in range(tf.shape(y_true)[0]):
         pred_masks = label(y_pred[i])
         true_masks = label(y_true[i])
         f2 = []
@@ -270,6 +272,7 @@ def F2_score(y_true, y_pred, beta=2):
             tp = 0
             fp = tf.shape(pred_masks)[0]
             fn = tf.shape(true_masks)[0]
+
             for true_mask in true_masks:
                 for pred_mask in pred_masks:
                     iou = IoU(true_mask, pred_mask)[-1]
@@ -278,7 +281,7 @@ def F2_score(y_true, y_pred, beta=2):
                         fp -= 1
                         fn -= 1
                         break
-            f2.append((1 + beta**2) * tp / ((1+beta**2)*tp + (beta**2) * fn + fp))
+            f2.append(((1 + beta**2) * tp + 1e-6) / ((1+beta**2)*tp + (beta**2) * fn + fp + 1e-6))
         F2.append(tf.reduce_mean(f2))
     return tf.reduce_mean(F2)
 

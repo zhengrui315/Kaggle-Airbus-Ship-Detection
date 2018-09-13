@@ -4,14 +4,14 @@ from _utils import *
 from tqdm import *
 from sklearn.model_selection import train_test_split
 import pickle
+import re
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
-DEBUG = 100   # 100 for testing the code. It should be switched back to 1 for training.
-vgg_trainable = None
+DEBUG = 1   # 100 for testing the code. It should be switched back to 1 for training.
 
 class airbus_base():
-    def __init__(self, image_shape, model_dir, continue_training=False, learning_rate=0.001):
+    def __init__(self, model_dir, image_shape=(768, 768), continue_training=False, learning_rate=0.05):
         self.image_shape = image_shape
         self.model_dir = model_dir
         if not os.path.isdir(self.model_dir):
@@ -21,7 +21,7 @@ class airbus_base():
         self.continue_training = continue_training
 
         self.sess = tf.Session()
-        tf.set_random_seed(918)
+        #tf.set_random_seed(918)
 
         self.x_holder = tf.placeholder(tf.float32, [None, self.image_shape[0], self.image_shape[1], 3],
                                        name="x_holder")
@@ -33,22 +33,27 @@ class airbus_base():
         reshaped_logits = tf.reshape(self.out, (-1, self.image_shape[0] * self.image_shape[1]))
         reshaped_labels = tf.reshape(self.y_holder, (-1, self.image_shape[0] * self.image_shape[1]))
 
-
+        self.bce_loss = tf.identity(BCE_Loss(self.final, self.y_holder), name="bce_loss")
         self.focal_loss = tf.identity(Focal_Loss(reshaped_logits, reshaped_labels), name="focal_loss")
         self.dice_loss = tf.zeros(1) #tf.identity(Dice_Loss(reshaped_logits, reshaped_labels), name="dice_loss")
         self.loss = tf.add(self.focal_loss, self.dice_loss, name="total_loss")
 
         # decayed_learning_rate = learning_rate * decay_rate ^ (global_step / decay_steps)
-        decay_steps = 20
+        decay_steps = 30
         decay_rate = 0.1
         global_step = tf.Variable(0, trainable=False, name='global_step')
         learning_rate = tf.train.exponential_decay(self.lr, global_step, decay_steps, decay_rate, staircase=False)
-        self.train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.loss, name="train_op")
+
+        down_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='downsample')
+        up_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='upsample')
+        trainable_variables = up_variables #+ down_variables
+        self.train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.bce_loss, var_list = trainable_variables, name="train_op")
 
         self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
         self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pixel_pred, self.y_holder), tf.float32),
                                        name="accuracy")
         self.iou = tf.identity(IoU(self.y_holder, self.pixel_pred), name="iou")
+        self.f2 = tf.identity(F2_score(self.y_holder, self.pixel_pred), name="f2")
 
         if self.continue_training:
             print("Continue Training ...")
@@ -106,10 +111,11 @@ class airbus_base():
         max_check_progress_num = 5
 
         print("Evaluating validation in the beginning ...")
-        val_loss, val_acc, val_iou = self.evaluate(data_folder, valid_df)
+        val_loss, val_acc, val_iou, val_f2 = self.evaluate(data_folder, valid_df)
         print("Validation loss: %.6f, %.6f, %.6f" % (val_loss[0], val_loss[1], val_loss[2]))
         print("Valication accuracy: %.5f" % val_acc)
         print("Valication iou:", val_iou)
+        #print("Valication F2:", val_f2)
 
         for epoch in range(epochs):
             print()
@@ -121,22 +127,24 @@ class airbus_base():
                     self.y_holder: y_batch})
 
             print("Evaluating validation...")
-            val_loss, val_acc, val_iou = self.evaluate(data_folder, valid_df)
+            val_loss, val_acc, val_iou, val_f2 = self.evaluate(data_folder, valid_df)
             val_loss_metrics.append(val_loss[0])
             val_acc_metrics.append(val_acc)
             val_iou_metrics.append(val_iou[4])
             print("Validation loss: %.6f, %.6f, %.6f" % (val_loss[0],val_loss[1],val_loss[2]))
             print("Valication accuracy: %.5f" % val_acc)
             print("Valication iou:", val_iou)
+            #print("Valication F2 score:", val_f2)
 
             print("Evaluating training...")
-            train_loss, train_acc, train_iou = self.evaluate(data_folder, train_df.sample(n=80))
+            train_loss, train_acc, train_iou, train_f2 = self.evaluate(data_folder, train_df.sample(n=80))
             train_loss_metrics.append(train_loss[0])
             train_acc_metrics.append(train_acc)
             train_iou_metrics.append(train_iou[4])
             print("Training loss: %.6f, %.6f, %.6f" % (train_loss[0],train_loss[1],train_loss[2]))
             print("Training accuracy: %.5f" % train_acc)
             print("Training iou:", train_iou)
+            #print("Training F2 score:", train_f2)
 
             if val_loss[0] < best_val_loss:
                 if DEBUG == 1:
@@ -170,13 +178,15 @@ class airbus_base():
         total_loss = [0,0,0] # total_loss, total_focal_loss, total_dice_loss
         total_acc = 0
         total_iou = [0,0,0,0,0] #  acc, TP, FP, FN, TN, iou
+        total_f2 = 0
         for _ in tqdm(range(0, num_examples//DEBUG, batch_size)):
             X_batch, y_batch = next(data_generator)
-            results = self.sess.run([loss, self.accuracy, self.iou], feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
+            results = self.sess.run([loss, self.accuracy, self.iou, self.f2], feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
             total_loss = [total_loss[i] + results[0][i] for i in range(len(results[0]))]
             total_acc += results[1]
             total_iou = [total_iou[i] + results[2][i] for i in range(len(results[2]))]
-        return [x / (num_examples / batch_size) for x in total_loss], total_acc / (num_examples / batch_size), [x / (num_examples / batch_size) for x in total_iou]
+            total_f2 += results[3]
+        return [x / (num_examples / batch_size) for x in total_loss], total_acc / (num_examples / batch_size), [x / (num_examples / batch_size) for x in total_iou], total_f2 / (num_examples / batch_size)
 
 
     def save_history(self, metrics):
@@ -298,53 +308,23 @@ class airbus_scratch(airbus_base):
 
 
 class VGG16(airbus_base):
-    def __init__(self, image_shape = (768, 768), model_dir = "./save_model", continue_training = False, vgg_path = "../vgg/vgg16_weights.npz"):
+    def __init__(self, vgg_path = "../vgg/vgg16_weights.npz", **kwargs):
         self.vgg_path = vgg_path
-        super(VGG16,self).__init__(image_shape=image_shape, model_dir=model_dir, continue_training=continue_training)
+        super(VGG16, self).__init__(**kwargs)
 
     def conv_layers(self):
         ############   down ##############
         # build vgg
         with tf.variable_scope('downsample'):
-            conv1_1 = tf.layers.conv2d(self.x_holder, filters=64, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv1_1')
-            conv1_2 = tf.layers.conv2d(conv1_1, filters=64, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv1_2')
-            pool1 = tf.layers.max_pooling2d(conv1_2, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool1')
+            pool1 = self.vgg_block(input=self.x_holder, filters=64, num_layers=2, block_id=1)
+            pool2 = self.vgg_block(input=pool1, filters=128, num_layers=2, block_id=2)
+            pool3 = self.vgg_block(input=pool2, filters=256, num_layers=3, block_id=3)
+            pool4 = self.vgg_block(input=pool3, filters=512, num_layers=3, block_id=4)
+            pool5 = self.vgg_block(input=pool4, filters=512, num_layers=3, block_id=5)
 
-            conv2_1 = tf.layers.conv2d(pool1, filters=128, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv2_1')
-            conv2_2 = tf.layers.conv2d(conv2_1, filters=128, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv2_2')
-            pool2 = tf.layers.max_pooling2d(conv2_2, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool2')
+        #tf.stop_gradient(pool5)
 
-            conv3_1 = tf.layers.conv2d(pool2, filters=256, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv3_1')
-            conv3_2 = tf.layers.conv2d(conv3_1, filters=256, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv3_2')
-            conv3_3 = tf.layers.conv2d(conv3_2, filters=256, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv3_3')
-            pool3 = tf.layers.max_pooling2d(conv3_3, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool3')
-
-            conv4_1 = tf.layers.conv2d(pool3, filters=512, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv4_1')
-            conv4_2 = tf.layers.conv2d(conv4_1, filters=512, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv4_2')
-            conv4_3 = tf.layers.conv2d(conv4_2, filters=512, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv4_3')
-            pool4 = tf.layers.max_pooling2d(conv4_3, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool4')
-
-            conv5_1 = tf.layers.conv2d(pool4, filters=512, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv5_1')
-            conv5_2 = tf.layers.conv2d(conv5_1, filters=512, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv5_2')
-            conv5_3 = tf.layers.conv2d(conv5_2, filters=512, kernel_size=(3, 3), padding='same', activation=tf.nn.relu,
-                                       trainable=vgg_trainable, name='vgg_conv5_3')
-            pool5 = tf.layers.max_pooling2d(conv5_3, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool5')
-
-        tf.stop_gradient(pool5)
-
-        #############  up  ###################
+        #############  up  ##################
         down_inputs = [pool5, pool4, pool3, pool2, pool1]
         logits = self.upsampling(down_inputs)
 
@@ -356,7 +336,7 @@ class VGG16(airbus_base):
             conv = tf.layers.conv2d(conv, filters=filters, kernel_size=(3, 3), padding='same', activation=tf.nn.relu, name='vgg_conv'+str(block_id)+'_'+str(i))
         conv = tf.layers.max_pooling2d(conv, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool'+str(block_id))
         return conv
-        
+
     def load_weights(self):
         weights = np.load(self.vgg_path)
         d = {var.name: var for var in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES) if var.name.startswith('vgg_')}
@@ -365,9 +345,9 @@ class VGG16(airbus_base):
             # print(new_name)
             # observe d.keys() and weights.keys() to see the difference in naming
             if new_name.endswith('/kernel:0'):
-                old_name = new_name[4:11] + '_W'
+                old_name = re.findall(r'conv\d*_\d', new_name)[0] + '_W'
             elif new_name.endswith('/bias:0'):
-                old_name = new_name[4:11] + '_b'
+                old_name = re.findall(r'conv\d*_\d', new_name)[0] + '_b'
             self.sess.run(d[new_name].assign(weights[old_name]))
             # print(old_name)
 
