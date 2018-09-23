@@ -168,6 +168,10 @@ def batch_gen(data_dir, label_df, batch_size=16, is_training=True, image_shape=N
     
     # if 'ImageId' in label_df.columns:
     #     label_df = label_df.set_index('ImageId')
+
+    # skip images without ship during training
+    if is_training:
+        label_df = label_df[label_df.HasShip != 0]
     
     img_list = list(label_df.index)
     while True:
@@ -177,13 +181,8 @@ def batch_gen(data_dir, label_df, batch_size=16, is_training=True, image_shape=N
             batch_y = []
             for img_name in img_list[start:start+batch_size]:
                 img_x = cv2.imread(os.path.join(data_dir,img_name))
-
                 if label_df.loc[img_name, 'HasShip'] == 0:
-                    if is_training:
-                        # skip images without ship during training
-                        continue
-                    else:
-                        img_y = rle_decode_all([])
+                    img_y = rle_decode_all([])
                 else:
                     img_y = rle_decode_all(label_df.loc[img_name,'EncodedPixelsList'])
 

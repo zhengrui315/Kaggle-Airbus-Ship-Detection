@@ -8,11 +8,12 @@ import re
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
-DEBUG = 1   # 100 for testing the code. It should be switched back to 1 for training.
 
 class airbus_base():
-    def __init__(self, model_dir, image_shape=(768, 768), continue_training=False, learning_rate=0.05):
+    def __init__(self, model_dir, image_shape=(768, 768), batch_size=4, debug=1, continue_training=False, learning_rate=1e-4):
         self.image_shape = image_shape
+        self.batch_size = batch_size
+        self.debug = debug
         self.model_dir = model_dir
         if not os.path.isdir(self.model_dir):
             os.makedirs(self.model_dir)
@@ -46,8 +47,8 @@ class airbus_base():
 
         down_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='downsample')
         up_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='upsample')
-        trainable_variables = up_variables #+ down_variables
-        self.train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.bce_loss, var_list = trainable_variables, name="train_op")
+        trainable_variables = up_variables + down_variables
+        self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.bce_loss, var_list = trainable_variables, name="train_op")
 
         self.pixel_pred = tf.cast(self.out > 0.5, tf.float32, name="pixel_pred")
         self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.pixel_pred, self.y_holder), tf.float32),
@@ -66,7 +67,7 @@ class airbus_base():
             # check trainable variables:
             # assert all(['new' in v.name for v in tf.trainable_variables()]), "please set trainable variables correctly"
             param_count = [tf.reduce_prod(v.shape) for v in tf.trainable_variables()]
-            print("There are {} trainable parameters in the layers".format(self.sess.run(param_count)))
+            #print("There are {} trainable parameters in the layers".format(self.sess.run(param_count)))
             print("There are {} trainable parameters".format(self.sess.run(tf.reduce_sum(param_count))))
 
         self.saver = tf.train.Saver()
@@ -84,13 +85,13 @@ class airbus_base():
         train_df = label_df.loc[train_ids]
         valid_df = label_df.loc[valid_ids]
 
-        batch_size = 16
+
         # Create function to get batches
-        training_batch_generator = batch_gen(data_folder, train_df, batch_size, image_shape=self.image_shape,
+        training_batch_generator = batch_gen(data_folder, train_df, self.batch_size, image_shape=self.image_shape,
                                              augment=True)
 
         samples_per_epoch = len(train_ids)
-        batches_per_epoch = samples_per_epoch // batch_size
+        batches_per_epoch = samples_per_epoch // self.batch_size
 
         train_loss_metrics = []
         train_acc_metrics = []
@@ -120,7 +121,7 @@ class airbus_base():
         for epoch in range(epochs):
             print()
             print("Epochs {} ... ".format(epoch + 1))
-            for _ in tqdm(range(batches_per_epoch//DEBUG)):
+            for _ in tqdm(range(batches_per_epoch//self.debug)):
                 X_batch, y_batch = next(training_batch_generator)
                 loss, _ = self.sess.run([self.loss, self.train_op], feed_dict={
                     self.x_holder: X_batch,
@@ -147,7 +148,7 @@ class airbus_base():
             #print("Training F2 score:", train_f2)
 
             if val_loss[0] < best_val_loss:
-                if DEBUG == 1:
+                if self.debug == 1:
                     print("saving checkpoint at epoch {} ...".format(epoch+1))
                     self.saver.save(self.sess, os.path.join(self.model_dir, "airbus_model"))
                 best_val_loss = val_loss[0]
@@ -163,30 +164,29 @@ class airbus_base():
         print(val_acc_metrics)
         print(val_iou_metrics)
 
-        if DEBUG == 1:
+        if self.debug == 1:
             self.save_history((train_loss_metrics, train_acc_metrics, train_iou_metrics, val_loss_metrics, val_acc_metrics, val_iou_metrics))
 
         print("DONE!")
 
 
     def evaluate(self, data_folder, label_df):
-        batch_size = 16
-        data_generator = batch_gen(data_folder, label_df, batch_size, is_training=False, image_shape=self.image_shape, augment=False)
-        num_examples = (label_df.shape[0] // batch_size) * batch_size
+        data_generator = batch_gen(data_folder, label_df, self.batch_size, is_training=False, image_shape=self.image_shape, augment=False)
+        num_examples = (label_df.shape[0] // self.batch_size) * self.batch_size
 
         loss = [self.loss, self.focal_loss, self.dice_loss]
         total_loss = [0,0,0] # total_loss, total_focal_loss, total_dice_loss
         total_acc = 0
         total_iou = [0,0,0,0,0] #  acc, TP, FP, FN, TN, iou
         total_f2 = 0
-        for _ in tqdm(range(0, num_examples//DEBUG, batch_size)):
+        for _ in tqdm(range(0, num_examples//self.debug, self.batch_size)):
             X_batch, y_batch = next(data_generator)
             results = self.sess.run([loss, self.accuracy, self.iou, self.f2], feed_dict={self.x_holder: X_batch, self.y_holder: y_batch})
             total_loss = [total_loss[i] + results[0][i] for i in range(len(results[0]))]
             total_acc += results[1]
             total_iou = [total_iou[i] + results[2][i] for i in range(len(results[2]))]
             total_f2 += results[3]
-        return [x / (num_examples / batch_size) for x in total_loss], total_acc / (num_examples / batch_size), [x / (num_examples / batch_size) for x in total_iou], total_f2 / (num_examples / batch_size)
+        return [x / (num_examples / self.batch_size) for x in total_loss], total_acc / (num_examples / self.batch_size), [x / (num_examples / self.batch_size) for x in total_iou], total_f2 / (num_examples / self.batch_size)
 
 
     def save_history(self, metrics):
@@ -333,11 +333,11 @@ class VGG16(airbus_base):
     def vgg_block(self, input, filters, num_layers, block_id):
         conv = input
         for i in range(num_layers):
-            conv = tf.layers.conv2d(conv, filters=filters, kernel_size=(3, 3), padding='same', activation=tf.nn.relu, name='vgg_conv'+str(block_id)+'_'+str(i))
+            conv = tf.layers.conv2d(conv, filters=filters, kernel_size=(3, 3), padding='same', activation=tf.nn.relu, name='vgg_conv'+str(block_id)+'_'+str(i+1))
         conv = tf.layers.max_pooling2d(conv, pool_size=(2, 2), strides=2, padding='same', name='vgg_pool'+str(block_id))
         return conv
 
-    def load_weights(self):
+    def load_weights0(self):
         weights = np.load(self.vgg_path)
         d = {var.name: var for var in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES) if var.name.startswith('vgg_')}
         # print(d.keys())
@@ -350,6 +350,15 @@ class VGG16(airbus_base):
                 old_name = re.findall(r'conv\d*_\d', new_name)[0] + '_b'
             self.sess.run(d[new_name].assign(weights[old_name]))
             # print(old_name)
+
+    def load_weights(self):
+        print("Loading new weights ...")
+        with open("./weights", "rb") as f:
+            weights = pickle.load(f)
+        d = {var.name.strip('downupsample').strip('/'): var for var in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES) if var.name != 'global_step:0' and 'Adam' not in var.name}
+        for var in d.keys():
+            self.sess.run(d[var].assign(weights[var]))
+
 
     def upsampling(self, down_inputs):
         raise NotImplementedError(" upsampling layers need to be implemented")

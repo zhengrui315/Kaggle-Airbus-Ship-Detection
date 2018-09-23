@@ -60,17 +60,36 @@ def main():
         default=1,
         help='Number of epochs.'
     )
+    parser.add_argument(
+        '-b',
+        '--batch_size',
+        type=int,
+        nargs='?',
+        default=1,
+        help='batch size'
+    )
+    parser.add_argument(
+        '-db',
+        '--debug',
+        type=int,
+        nargs='?',
+        default=1,
+        help='debug mode, 1 for training, >1 for debugging'
+    )
     parser.add_argument("-ct", "--continues_training", help="Continue from where you left off", action="store_true")
     args = parser.parse_args()
     NUM_EPOCHS = args.num_epochs
+    BATCH_SIZE = args.batch_size
+    DEBUG = args.debug
     CONTINUE_TRAINING = args.continues_training
 
-    image_shape = (224, 224)
+    # image_shape = (224, 224)
+    image_shape = (768, 768)
     data_folder = os.path.join(os.getcwd(), '../data/train')
     model_folder = os.path.join(os.getcwd(), 'save_model')
     label_df = masks_read(os.path.join(os.getcwd(), '../data'))
 
-    airbus_model = airbus_vgg(image_shape=image_shape, model_dir=model_folder, continue_training=CONTINUE_TRAINING)
+    airbus_model = airbus_vgg(image_shape=image_shape, batch_size=BATCH_SIZE, debug=DEBUG, model_dir=model_folder, continue_training=CONTINUE_TRAINING)
 
     airbus_model.train(NUM_EPOCHS, data_folder, label_df)
 
